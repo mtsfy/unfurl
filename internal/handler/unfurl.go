@@ -3,14 +3,9 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-)
 
-type ExtractedData struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Image       string `json:"image"`
-	Site        string `json:"site"`
-}
+	"github.com/mtsfy/unfurl/internal/service"
+)
 
 type InputData struct {
 	Url string `json:"url"`
@@ -24,14 +19,19 @@ func PostUnfurl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := ExtractedData{
-		Title:       "TODO: Title",
-		Description: "TODO: Description",
-		Image:       "TODO: Image",
-		Site:        "TODO: Site",
+	html, err := service.Fetch(input.Url)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	data, err := json.Marshal(resp)
+	extracted, err := service.Extract(html, input.Url)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data, err := json.Marshal(extracted)
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return

@@ -302,7 +302,9 @@ func isPopular(urlStr string) bool {
 }
 
 func init() {
-	err := playwright.Install() // remove skip install (Dev)
+	err := playwright.Install(&playwright.RunOptions{
+		SkipInstallBrowsers: true,
+	})
 	if err != nil {
 		log.Fatal("Failed to install playwright:", err)
 	}

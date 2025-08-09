@@ -2,13 +2,12 @@ package service
 
 import (
 	"fmt"
-	"io"
-	"net/http"
+	"log"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/playwright-community/playwright-go"
 )
 
 type ExtractedData struct {
@@ -23,26 +22,12 @@ func Fetch(urlStr string) (string, error) {
 		return "", fmt.Errorf("invalid URL: %w", err)
 	}
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	resp, err := client.Get(urlStr)
+	html, err := scrapePW(urlStr)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch URL: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP error: %d %s", resp.StatusCode, resp.Status)
+		return "", fmt.Errorf("failed to fetch %s: %w", urlStr, err) // Add context here
 	}
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	return string(data), nil
+	return html, nil
 }
 
 func Extract(data string, baseURL string) (ExtractedData, error) {
@@ -195,4 +180,50 @@ func resolveURL(baseURL, relativeURL string) string {
 	}
 
 	return relativeURL
+}
+
+func scrapePW(urlStr string) (string, error) {
+	pw, err := playwright.Run()
+	if err != nil {
+		return "", fmt.Errorf("failed to start playwright: %w", err)
+	}
+	defer pw.Stop()
+
+	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+		Channel: playwright.String("chrome"),
+		Timeout: playwright.Float(30000),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to launch browser: %w", err)
+	}
+	defer browser.Close()
+
+	page, err := browser.NewPage(playwright.BrowserNewPageOptions{
+		UserAgent: playwright.String("Mozilla/5.0 (compatible; UnfurlBot/1.0)"),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create page: %w", err)
+	}
+
+	if _, err = page.Goto(urlStr, playwright.PageGotoOptions{
+		Timeout: playwright.Float(30000),
+	}); err != nil {
+		return "", fmt.Errorf("failed to navigate to %s: %w", urlStr, err)
+	}
+
+	html, err := page.Content()
+	if err != nil {
+		return "", fmt.Errorf("failed to get page content: %w", err)
+	}
+
+	return html, nil
+}
+
+func init() {
+	err := playwright.Install(&playwright.RunOptions{
+		SkipInstallBrowsers: true,
+	})
+	if err != nil {
+		log.Fatal("Failed to install playwright:", err)
+	}
 }

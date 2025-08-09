@@ -2,9 +2,12 @@ package service
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/playwright-community/playwright-go"
@@ -22,9 +25,13 @@ func Fetch(urlStr string) (string, error) {
 		return "", fmt.Errorf("invalid URL: %w", err)
 	}
 
-	html, err := scrapePW(urlStr)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch %s: %w", urlStr, err) // Add context here
+	if isPopular(urlStr) {
+		return usePW(urlStr)
+	}
+
+	html, err := useHTTP(urlStr)
+	if isSPA(html) || err != nil {
+		return usePW(urlStr)
 	}
 
 	return html, nil
@@ -182,7 +189,7 @@ func resolveURL(baseURL, relativeURL string) string {
 	return relativeURL
 }
 
-func scrapePW(urlStr string) (string, error) {
+func usePW(urlStr string) (string, error) {
 	pw, err := playwright.Run()
 	if err != nil {
 		return "", fmt.Errorf("failed to start playwright: %w", err)
@@ -190,8 +197,7 @@ func scrapePW(urlStr string) (string, error) {
 	defer pw.Stop()
 
 	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
-		Channel: playwright.String("chrome"),
-		Timeout: playwright.Float(30000),
+		Timeout: playwright.Float(15000),
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to launch browser: %w", err)
@@ -206,7 +212,8 @@ func scrapePW(urlStr string) (string, error) {
 	}
 
 	if _, err = page.Goto(urlStr, playwright.PageGotoOptions{
-		Timeout: playwright.Float(30000),
+		Timeout:   playwright.Float(15000),
+		WaitUntil: playwright.WaitUntilStateLoad,
 	}); err != nil {
 		return "", fmt.Errorf("failed to navigate to %s: %w", urlStr, err)
 	}
@@ -219,10 +226,83 @@ func scrapePW(urlStr string) (string, error) {
 	return html, nil
 }
 
+func useHTTP(urlStr string) (string, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	req, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; UnfurlBot/1.0)")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP error: %d %s", resp.StatusCode, resp.Status)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return string(data), nil
+}
+
+func isSPA(html string) bool {
+	if strings.Contains(html, "This browser is no longer supported") {
+		return true
+	}
+
+	signals := []string{
+		"data-reactroot", "<div id=\"root\"",
+		"data-v-", "<div id=\"app\"",
+		"ng-version", "_ngcontent-", "<app-root>",
+		"svelte-",
+		"__NEXT_DATA__", "<div id=\"__next\">",
+		"window.__NUXT__", "<div id=\"__nuxt\">",
+		"webpackChunk", "parcelRequire", "vite/dist",
+	}
+
+	for _, s := range signals {
+		if strings.Contains(html, s) {
+			return true
+		}
+	}
+
+	return len(strings.TrimSpace(html)) < 1000
+}
+
+func isPopular(urlStr string) bool {
+	sites := []string{
+		"x.com", "twitter.com",
+		"instagram.com",
+		"linkedin.com",
+		"tiktok.com",
+		"youtube.com",
+		"facebook.com",
+		"reddit.com",
+		"github.com",
+		"linkedin.com",
+	}
+
+	for _, site := range sites {
+		if strings.Contains(urlStr, site) {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
-	err := playwright.Install(&playwright.RunOptions{
-		SkipInstallBrowsers: true,
-	})
+	err := playwright.Install() // remove skip install (Dev)
 	if err != nil {
 		log.Fatal("Failed to install playwright:", err)
 	}
